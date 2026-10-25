@@ -1,6 +1,4 @@
 import React, { useEffect, useRef, useState } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
 import { 
   MapPin, 
   Navigation, 
@@ -12,8 +10,9 @@ import {
   Layers,
   Map as MapIcon,
   Globe2,
-  ZoomIn,
-  ZoomOut
+  TrendingUp,
+  RefreshCw,
+  Sparkles
 } from 'lucide-react';
 
 interface Place {
@@ -118,126 +117,124 @@ const places: Place[] = [
 
 export function App() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<L.Map | null>(null);
-  const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const placemarksRef = useRef<{ [key: string]: any }>({});
   const [selectedPlace, setSelectedPlace] = useState<Place>(places[0]);
   const [activeCategory, setActiveCategory] = useState<string>('Все');
   const [search, setSearch] = useState('');
-  const [mapStyle, setMapStyle] = useState<'carto' | 'satellite' | 'osm'>('carto');
+  const [mapType, setMapType] = useState<'map' | 'satellite' | 'hybrid'>('map');
+  const [mapLoaded, setMapLoaded] = useState(false);
 
-  // Initialize Map
+  // Initialize Yandex Maps
   useEffect(() => {
-    if (!mapContainerRef.current || mapInstanceRef.current) return;
+    let checkInterval: any = null;
 
-    // Create Map
-    const map = L.map(mapContainerRef.current, {
-      center: [55.0, 60.0],
-      zoom: 4,
-      zoomControl: false,
-    });
+    const initYmaps = () => {
+      const ymaps = (window as any).ymaps;
+      if (!ymaps) return;
 
-    // Default Tile Layer
-    const tileUrl = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
-    const tileLayer = L.tileLayer(tileUrl, {
-      subdomains: 'abcd',
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap &copy; CARTO'
-    }).addTo(map);
+      ymaps.ready(() => {
+        if (!mapContainerRef.current || mapInstanceRef.current) return;
 
-    tileLayerRef.current = tileLayer;
+        try {
+          const map = new ymaps.Map(
+            mapContainerRef.current,
+            {
+              center: [places[0].lat, places[0].lng],
+              zoom: 6,
+              type: 'yandex#map',
+              controls: ['zoomControl', 'fullscreenControl']
+            },
+            {
+              suppressMapOpenBlock: true
+            }
+          );
 
-    // Markers
-    places.forEach((p) => {
-      const pinIcon = L.divIcon({
-        className: 'custom-geo-pin',
-        html: `
-          <div style="
-            width: 32px;
-            height: 32px;
-            background: #f59e0b;
-            border: 2px solid #ffffff;
-            border-radius: 50% 50% 50% 0;
-            transform: rotate(-45deg);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.5);
-            cursor: pointer;
-          ">
-            <div style="
-              width: 10px;
-              height: 10px;
-              background: #0f172a;
-              border-radius: 50%;
-            "></div>
-          </div>
-        `,
-        iconSize: [32, 32],
-        iconAnchor: [16, 32],
-        popupAnchor: [0, -32]
+          // Add Placemarks for each place
+          places.forEach((p) => {
+            const placemark = new ymaps.Placemark(
+              [p.lat, p.lng],
+              {
+                balloonContentHeader: `<div style="font-size:14px;font-weight:bold;color:#0f172a;">${p.name}</div>`,
+                balloonContentBody: `
+                  <div style="font-size:12px;color:#334155;margin:4px 0;">
+                    <b>Регион:</b> ${p.region}<br/>
+                    <b>Высота:</b> ${p.elevation}<br/>
+                    <p style="margin-top:6px;line-height:1.4;">${p.description}</p>
+                  </div>
+                `,
+                balloonContentFooter: `<div style="font-size:11px;color:#64748b;font-weight:600;">GEOGID Экспедиция</div>`,
+                hintContent: p.name
+              },
+              {
+                preset: 'islands#darkOrangeDotIconWithCaption',
+                iconColor: '#f59e0b'
+              }
+            );
+
+            placemark.events.add('click', () => {
+              setSelectedPlace(p);
+              map.panTo([p.lat, p.lng], { flying: true, duration: 1200 });
+            });
+
+            map.geoObjects.add(placemark);
+            placemarksRef.current[p.id] = placemark;
+          });
+
+          mapInstanceRef.current = map;
+          setMapLoaded(true);
+
+          // Auto-resize
+          setTimeout(() => {
+            map.container.fitToViewport();
+          }, 300);
+        } catch (err) {
+          console.error('Yandex Maps init error:', err);
+        }
       });
+    };
 
-      const marker = L.marker([p.lat, p.lng], { icon: pinIcon }).addTo(map);
-      marker.bindPopup(`
-        <div style="color: #0f172a; font-family: sans-serif; padding: 4px;">
-          <b style="font-size: 13px;">${p.name}</b><br/>
-          <span style="font-size: 11px; color: #64748b;">${p.region}</span>
-        </div>
-      `);
-
-      marker.on('click', () => {
-        setSelectedPlace(p);
-        map.flyTo([p.lat, p.lng], 8, { duration: 1.2 });
-      });
-    });
-
-    mapInstanceRef.current = map;
-
-    // Force map to recalculate container size
-    setTimeout(() => {
-      map.invalidateSize();
-    }, 250);
-
-    const handleResize = () => map.invalidateSize();
-    window.addEventListener('resize', handleResize);
+    if ((window as any).ymaps) {
+      initYmaps();
+    } else {
+      checkInterval = setInterval(() => {
+        if ((window as any).ymaps) {
+          clearInterval(checkInterval);
+          initYmaps();
+        }
+      }, 300);
+    }
 
     return () => {
-      window.removeEventListener('resize', handleResize);
-      map.remove();
-      mapInstanceRef.current = null;
+      if (checkInterval) clearInterval(checkInterval);
+      if (mapInstanceRef.current) {
+        try {
+          mapInstanceRef.current.destroy();
+          mapInstanceRef.current = null;
+        } catch (e) {}
+      }
     };
   }, []);
 
-  // Update map layer on toggle
-  useEffect(() => {
-    if (!mapInstanceRef.current || !tileLayerRef.current) return;
-
-    mapInstanceRef.current.removeLayer(tileLayerRef.current);
-
-    let url = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
-    let subdomains = 'abcd';
-
-    if (mapStyle === 'satellite') {
-      url = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-      subdomains = 'abc';
-    } else if (mapStyle === 'osm') {
-      url = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-      subdomains = 'abc';
+  // Handle Map Type Change
+  const changeMapType = (type: 'map' | 'satellite' | 'hybrid') => {
+    setMapType(type);
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.setType(`yandex#${type}`);
     }
+  };
 
-    const newLayer = L.tileLayer(url, {
-      subdomains,
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap'
-    }).addTo(mapInstanceRef.current);
-
-    tileLayerRef.current = newLayer;
-  }, [mapStyle]);
-
+  // Fly to selected place
   const handleSelectPlace = (place: Place) => {
     setSelectedPlace(place);
     if (mapInstanceRef.current) {
-      mapInstanceRef.current.flyTo([place.lat, place.lng], 8, { duration: 1.2 });
+      mapInstanceRef.current.panTo([place.lat, place.lng], { flying: true, duration: 1200 });
+      mapInstanceRef.current.setZoom(8, { duration: 800 });
+
+      const placemark = placemarksRef.current[place.id];
+      if (placemark) {
+        placemark.balloon.open();
+      }
     }
   };
 
@@ -261,35 +258,35 @@ export function App() {
                 GEOGID<span className="text-amber-500">.RU</span>
               </span>
               <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                Экспедиции РФ
+                Яндекс Карты
               </span>
             </div>
             <p className="text-[10px] text-zinc-400 font-mono tracking-wider">
-              Цифровой путеводитель & гео-навигатор природных чудес
+              Высокоточные карты и спутниковые снимки РФ
             </p>
           </div>
         </div>
 
-        {/* Map Layer Switcher & Link */}
+        {/* Yandex Map Type Switcher */}
         <div className="flex items-center gap-2">
           <div className="hidden sm:flex items-center p-1 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono">
             <button
-              onClick={() => setMapStyle('carto')}
-              className={`px-2.5 py-1 rounded-lg transition-all ${mapStyle === 'carto' ? 'bg-amber-500 text-zinc-950 font-bold' : 'text-zinc-400 hover:text-white'}`}
+              onClick={() => changeMapType('map')}
+              className={`px-3 py-1 rounded-lg transition-all ${mapType === 'map' ? 'bg-amber-500 text-zinc-950 font-bold' : 'text-zinc-400 hover:text-white'}`}
             >
               Схема
             </button>
             <button
-              onClick={() => setMapStyle('satellite')}
-              className={`px-2.5 py-1 rounded-lg transition-all ${mapStyle === 'satellite' ? 'bg-amber-500 text-zinc-950 font-bold' : 'text-zinc-400 hover:text-white'}`}
+              onClick={() => changeMapType('satellite')}
+              className={`px-3 py-1 rounded-lg transition-all ${mapType === 'satellite' ? 'bg-amber-500 text-zinc-950 font-bold' : 'text-zinc-400 hover:text-white'}`}
             >
               Спутник
             </button>
             <button
-              onClick={() => setMapStyle('osm')}
-              className={`px-2.5 py-1 rounded-lg transition-all ${mapStyle === 'osm' ? 'bg-amber-500 text-zinc-950 font-bold' : 'text-zinc-400 hover:text-white'}`}
+              onClick={() => changeMapType('hybrid')}
+              className={`px-3 py-1 rounded-lg transition-all ${mapType === 'hybrid' ? 'bg-amber-500 text-zinc-950 font-bold' : 'text-zinc-400 hover:text-white'}`}
             >
-              OSM
+              Гибрид
             </button>
           </div>
 
@@ -305,9 +302,9 @@ export function App() {
         </div>
       </header>
 
-      {/* Main Workspace */}
+      {/* Main Container */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
-        {/* Left Sidebar */}
+        {/* Left Expedition Sidebar */}
         <aside className="w-full md:w-[420px] border-r border-[#1e293b] bg-[#0c1015]/95 flex flex-col shrink-0 z-10 md:h-full max-h-[48vh] md:max-h-full">
           {/* Search & Categories */}
           <div className="p-4 border-b border-zinc-800 space-y-3 bg-[#0f141c]">
@@ -406,21 +403,21 @@ export function App() {
                 className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-zinc-950 font-bold font-mono text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-lg shadow-amber-500/20"
               >
                 <Navigation className="w-4 h-4" />
-                <span>Приблизить на карте</span>
+                <span>Найти на Яндекс Картах</span>
               </button>
             </div>
           )}
         </aside>
 
         {/* Map Area */}
-        <div className="flex-1 h-full w-full relative min-h-[300px]">
+        <div className="flex-1 h-full w-full relative min-h-[300px] bg-[#1a1d24]">
           <div ref={mapContainerRef} className="absolute inset-0 w-full h-full" />
 
-          {/* Floating Topo HUD Overlay */}
+          {/* Floating HUD */}
           <div className="absolute top-4 left-4 z-[400] hidden sm:flex items-center gap-3 p-3 rounded-2xl bg-[#0c1015]/90 border border-[#1e293b] backdrop-blur-md shadow-2xl">
             <div className="flex items-center gap-2 font-mono text-xs">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-              <span className="text-zinc-300">GPS Карта активна</span>
+              <span className="text-zinc-300">Яндекс Карты онлайн</span>
             </div>
             <div className="h-4 w-px bg-zinc-800" />
             <div className="text-xs font-mono text-amber-400">
