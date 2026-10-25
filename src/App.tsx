@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { 
   MapPin, 
   Navigation, 
@@ -6,18 +8,12 @@ import {
   Search, 
   Star, 
   Mountain, 
-  Sun, 
-  Wind, 
-  Eye, 
-  Layers, 
-  ArrowRight,
   ExternalLink,
-  ChevronRight,
-  TrendingUp,
-  Footprints,
-  Clock,
-  Shield,
-  Bookmark
+  Layers,
+  Map as MapIcon,
+  Globe2,
+  ZoomIn,
+  ZoomOut
 } from 'lucide-react';
 
 interface Place {
@@ -121,81 +117,127 @@ const places: Place[] = [
 ];
 
 export function App() {
-  const mapRef = useRef<any>(null);
-  const markersRef = useRef<any[]>([]);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<L.Map | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
   const [selectedPlace, setSelectedPlace] = useState<Place>(places[0]);
   const [activeCategory, setActiveCategory] = useState<string>('Все');
   const [search, setSearch] = useState('');
-  const [mapLayer, setMapLayer] = useState<'topo' | 'satellite'>('topo');
+  const [mapStyle, setMapStyle] = useState<'carto' | 'satellite' | 'osm'>('carto');
 
+  // Initialize Map
   useEffect(() => {
-    if (typeof window !== 'undefined' && (window as any).L && !mapRef.current) {
-      const L = (window as any).L;
-      const map = L.map('map', {
-        center: [selectedPlace.lat, selectedPlace.lng],
-        zoom: 6,
-        zoomControl: false
-      });
+    if (!mapContainerRef.current || mapInstanceRef.current) return;
 
-      L.control.zoom({ position: 'bottomright' }).addTo(map);
+    // Create Map
+    const map = L.map(mapContainerRef.current, {
+      center: [55.0, 60.0],
+      zoom: 4,
+      zoomControl: false,
+    });
 
-      // Topo/Dark map
-      const tileLayer = L.tileLayer(
-        mapLayer === 'topo'
-          ? 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
-          : 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        {
-          attribution: '&copy; CartoDB &copy; Esri',
-          maxZoom: 19
-        }
-      ).addTo(map);
+    // Default Tile Layer
+    const tileUrl = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
+    const tileLayer = L.tileLayer(tileUrl, {
+      subdomains: 'abcd',
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
 
-      // Create Custom Pins
-      places.forEach(p => {
-        const customIcon = L.divIcon({
-          className: 'custom-geo-pin',
-          html: `
+    tileLayerRef.current = tileLayer;
+
+    // Markers
+    places.forEach((p) => {
+      const pinIcon = L.divIcon({
+        className: 'custom-geo-pin',
+        html: `
+          <div style="
+            width: 32px;
+            height: 32px;
+            background: #f59e0b;
+            border: 2px solid #ffffff;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.5);
+            cursor: pointer;
+          ">
             <div style="
-              width: 34px; 
-              height: 34px; 
-              background: #d97706; 
-              border: 2px solid #ffffff; 
-              border-radius: 50% 50% 50% 0; 
-              transform: rotate(-45deg); 
-              display: flex; 
-              align-items: center; 
-              justify-content: center;
-              box-shadow: 0 4px 15px rgba(217, 119, 6, 0.5);
-              cursor: pointer;
-            ">
-              <div style="
-                width: 12px; 
-                height: 12px; 
-                background: #ffffff; 
-                border-radius: 50%;
-              "></div>
-            </div>
-          `,
-          iconSize: [34, 34],
-          iconAnchor: [17, 34]
-        });
-
-        const marker = L.marker([p.lat, p.lng], { icon: customIcon }).addTo(map);
-        marker.on('click', () => {
-          setSelectedPlace(p);
-          map.flyTo([p.lat, p.lng], 8, { duration: 1.5 });
-        });
-        markersRef.current.push(marker);
+              width: 10px;
+              height: 10px;
+              background: #0f172a;
+              border-radius: 50%;
+            "></div>
+          </div>
+        `,
+        iconSize: [32, 32],
+        iconAnchor: [16, 32],
+        popupAnchor: [0, -32]
       });
 
-      mapRef.current = map;
+      const marker = L.marker([p.lat, p.lng], { icon: pinIcon }).addTo(map);
+      marker.bindPopup(`
+        <div style="color: #0f172a; font-family: sans-serif; padding: 4px;">
+          <b style="font-size: 13px;">${p.name}</b><br/>
+          <span style="font-size: 11px; color: #64748b;">${p.region}</span>
+        </div>
+      `);
+
+      marker.on('click', () => {
+        setSelectedPlace(p);
+        map.flyTo([p.lat, p.lng], 8, { duration: 1.2 });
+      });
+    });
+
+    mapInstanceRef.current = map;
+
+    // Force map to recalculate container size
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 250);
+
+    const handleResize = () => map.invalidateSize();
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      map.remove();
+      mapInstanceRef.current = null;
+    };
+  }, []);
+
+  // Update map layer on toggle
+  useEffect(() => {
+    if (!mapInstanceRef.current || !tileLayerRef.current) return;
+
+    mapInstanceRef.current.removeLayer(tileLayerRef.current);
+
+    let url = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
+    let subdomains = 'abcd';
+
+    if (mapStyle === 'satellite') {
+      url = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+      subdomains = 'abc';
+    } else if (mapStyle === 'osm') {
+      url = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+      subdomains = 'abc';
     }
-  }, [mapLayer]);
+
+    const newLayer = L.tileLayer(url, {
+      subdomains,
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(mapInstanceRef.current);
+
+    tileLayerRef.current = newLayer;
+  }, [mapStyle]);
 
   const handleSelectPlace = (place: Place) => {
     setSelectedPlace(place);
-    if (mapRef.current) {
-      mapRef.current.flyTo([place.lat, place.lng], 8, { duration: 1.4 });
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.flyTo([place.lat, place.lng], 8, { duration: 1.2 });
     }
   };
 
@@ -207,7 +249,7 @@ export function App() {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#0c1015] text-[#e2e8f0] font-sans overflow-hidden">
-      {/* Topo Texture Gradient Top Bar */}
+      {/* Top Bar */}
       <header className="h-16 border-b border-[#1e293b] bg-[#0c1015]/95 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between shrink-0 z-20">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-lg shadow-amber-500/10">
@@ -228,27 +270,45 @@ export function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-300">
-            <Navigation className="w-3.5 h-3.5 text-amber-400" />
-            <span>Локаций в базе: {places.length}</span>
+        {/* Map Layer Switcher & Link */}
+        <div className="flex items-center gap-2">
+          <div className="hidden sm:flex items-center p-1 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono">
+            <button
+              onClick={() => setMapStyle('carto')}
+              className={`px-2.5 py-1 rounded-lg transition-all ${mapStyle === 'carto' ? 'bg-amber-500 text-zinc-950 font-bold' : 'text-zinc-400 hover:text-white'}`}
+            >
+              Схема
+            </button>
+            <button
+              onClick={() => setMapStyle('satellite')}
+              className={`px-2.5 py-1 rounded-lg transition-all ${mapStyle === 'satellite' ? 'bg-amber-500 text-zinc-950 font-bold' : 'text-zinc-400 hover:text-white'}`}
+            >
+              Спутник
+            </button>
+            <button
+              onClick={() => setMapStyle('osm')}
+              className={`px-2.5 py-1 rounded-lg transition-all ${mapStyle === 'osm' ? 'bg-amber-500 text-zinc-950 font-bold' : 'text-zinc-400 hover:text-white'}`}
+            >
+              OSM
+            </button>
           </div>
+
           <a
             href="https://github.com/phaxdev/geogid"
             target="_blank"
             rel="noopener noreferrer"
             className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md shadow-amber-500/20"
           >
-            <span>Исходный код</span>
+            <span>GitHub</span>
             <ExternalLink className="w-3.5 h-3.5" />
           </a>
         </div>
       </header>
 
-      {/* Main Container */}
+      {/* Main Workspace */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
-        {/* Left Expedition Sidebar */}
-        <aside className="w-full md:w-[420px] border-r border-[#1e293b] bg-[#0c1015]/95 flex flex-col shrink-0 z-10 md:h-full max-h-[50vh] md:max-h-full">
+        {/* Left Sidebar */}
+        <aside className="w-full md:w-[420px] border-r border-[#1e293b] bg-[#0c1015]/95 flex flex-col shrink-0 z-10 md:h-full max-h-[48vh] md:max-h-full">
           {/* Search & Categories */}
           <div className="p-4 border-b border-zinc-800 space-y-3 bg-[#0f141c]">
             <div className="relative">
@@ -316,7 +376,7 @@ export function App() {
                     </p>
 
                     <div className="flex items-center gap-3 mt-2 text-[10px] font-mono text-zinc-400">
-                      <span>Высота: {p.elevation}</span>
+                      <span>{p.elevation}</span>
                       <span>•</span>
                       <span className="text-emerald-400">{p.difficulty}</span>
                     </div>
@@ -340,30 +400,21 @@ export function App() {
               <p className="text-xs text-zinc-400 leading-relaxed mb-3 line-clamp-2">
                 {selectedPlace.description}
               </p>
-              
-              <div className="space-y-1 mb-3">
-                {selectedPlace.highlights.map((h, i) => (
-                  <div key={i} className="text-[11px] text-zinc-300 flex items-center gap-1.5 font-mono">
-                    <span className="text-amber-500">✦</span>
-                    <span>{h}</span>
-                  </div>
-                ))}
-              </div>
 
               <button
                 onClick={() => handleSelectPlace(selectedPlace)}
                 className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-zinc-950 font-bold font-mono text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-lg shadow-amber-500/20"
               >
                 <Navigation className="w-4 h-4" />
-                <span>Центрировать на карте</span>
+                <span>Приблизить на карте</span>
               </button>
             </div>
           )}
         </aside>
 
-        {/* Map Area with Live Topo HUD */}
-        <div className="flex-1 h-full w-full relative">
-          <div id="map" className="w-full h-full" />
+        {/* Map Area */}
+        <div className="flex-1 h-full w-full relative min-h-[300px]">
+          <div ref={mapContainerRef} className="absolute inset-0 w-full h-full" />
 
           {/* Floating Topo HUD Overlay */}
           <div className="absolute top-4 left-4 z-[400] hidden sm:flex items-center gap-3 p-3 rounded-2xl bg-[#0c1015]/90 border border-[#1e293b] backdrop-blur-md shadow-2xl">
